@@ -1,0 +1,23 @@
+[package]
+name = "cloned-site-app"
+version = "0.1.0"
+description = "Offline desktop wrapper around a webcloner-downloaded site"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# No network / no default-open-URL features enabled on purpose:
+# this app is meant to only ever show files bundled inside itself.
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "cloned-site-app"
+path = "src/main.rs"
