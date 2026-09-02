@@ -6,3 +6,6 @@ desktop-app-template/dist/*
 !desktop-app-template/dist/.gitkeep
 desktop-app-template/src-tauri/target
 gui/src-tauri/target
+gui/resources/runtimes/php/
+gui/resources/runtimes/dotnet/
+!gui/resources/runtimes/README.txt

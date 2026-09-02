@@ -4,25 +4,26 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>webcloner</title>
+  <link rel="icon" type="image/svg+xml" href="logo.svg" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="app">
     <header>
-      <div class="logo">🌐</div>
-      <div>
+      <img class="logo" src="logo.svg" width="56" height="56" alt="webcloner" />
+      <div class="header-text">
         <h1>webcloner</h1>
-        <p>کلون، سرو و تست آفلاین پروژه‌های وب</p>
+        <p>کلون، سرو و تست آفلاین — همزمان و بدون وقفه</p>
       </div>
     </header>
 
-    <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="download" role="tab">دانلود سایت</button>
-      <button class="tab" data-tab="server" role="tab">سرور محلی</button>
-    </nav>
+    <div class="workspace">
+      <section class="panel panel-download" aria-label="دانلود سایت">
+        <div class="panel-head">
+          <h2>دانلود سایت</h2>
+          <span id="downloadBadge" class="badge hidden">در حال دانلود</span>
+        </div>
 
-    <main>
-      <section id="tab-download" class="tab-panel active">
         <label class="field">
           <span>آدرس سایت</span>
           <input id="url" type="text" placeholder="example.com یا https://example.com" spellcheck="false" autocomplete="off" />
@@ -33,7 +34,7 @@
           <span>محل ذخیره‌سازی</span>
           <div class="path-row">
             <input id="saveDir" type="text" readonly placeholder="پوشه را انتخاب کنید..." />
-            <button type="button" id="pickDirBtn" class="secondary">انتخاب پوشه</button>
+            <button type="button" id="pickDirBtn" class="secondary">انتخاب</button>
           </div>
         </label>
 
@@ -42,7 +43,7 @@
           <input id="outName" type="text" value="cloned-site" spellcheck="false" />
         </label>
 
-        <div class="grid">
+        <div class="grid grid-3">
           <label class="field">
             <span>حداکثر صفحات</span>
             <input id="maxPages" type="number" min="1" max="500" value="40" />
@@ -58,15 +59,15 @@
         </div>
 
         <div class="checks">
-          <label><input id="externalAssets" type="checkbox" checked /> دانلود assetهای خارجی (CDN، فونت و...)</label>
-          <label><input id="followExternal" type="checkbox" /> دنبال کردن صفحات دامنه‌های دیگر</label>
-          <label><input id="zip" type="checkbox" /> ساخت فایل ZIP بعد از دانلود</label>
+          <label><input id="externalAssets" type="checkbox" checked /> assetهای خارجی (CDN، فونت)</label>
+          <label><input id="followExternal" type="checkbox" /> صفحات دامنه‌های دیگر</label>
+          <label><input id="zip" type="checkbox" /> ساخت ZIP بعد از دانلود</label>
         </div>
 
         <div class="actions">
           <button id="downloadBtn" class="primary">شروع دانلود</button>
           <button id="openBtn" class="secondary" disabled>باز کردن پوشه</button>
-          <button id="useForServerBtn" class="secondary" disabled>سرو این پوشه</button>
+          <button id="useForServerBtn" class="secondary" disabled>سرو همین پوشه →</button>
         </div>
 
         <section class="log-panel">
@@ -75,18 +76,23 @@
         </section>
       </section>
 
-      <section id="tab-server" class="tab-panel" hidden>
+      <section class="panel panel-server" aria-label="سرور محلی">
+        <div class="panel-head">
+          <h2>سرور محلی</h2>
+          <span id="serverBadge" class="badge hidden">فعال</span>
+        </div>
+
         <label class="field">
           <span>پوشه پروژه</span>
           <div class="path-row">
-            <input id="projectDir" type="text" readonly placeholder="پوشه HTML/PHP/ASP را انتخاب کنید..." />
-            <button type="button" id="pickProjectBtn" class="secondary">انتخاب پوشه</button>
+            <input id="projectDir" type="text" readonly placeholder="پوشه HTML/PHP/ASP..." />
+            <button type="button" id="pickProjectBtn" class="secondary">انتخاب</button>
           </div>
-          <small class="hint">هر پروژه‌ای که دانلود کرده‌اید یا ساخته‌اید — HTML، CSS، JS، PHP، ASP.NET</small>
+          <small class="hint">می‌توانید حین دانلود هم سرور را روی همان پوشه خروجی بالا بیاورید.</small>
         </label>
 
         <div id="projectScan" class="scan-box hidden">
-          <div class="scan-title">نوع پروژه شناسایی‌شده</div>
+          <div class="scan-title">نوع پروژه</div>
           <div id="scanTags" class="scan-tags"></div>
         </div>
 
@@ -103,21 +109,21 @@
 
         <p id="backendNote" class="hint backend-note"></p>
 
-        <div class="status-box" id="serverStatusBox">
-          <span class="status-label">وضعیت:</span>
+        <div class="status-box">
+          <span class="status-label">وضعیت سرور:</span>
           <span id="serverStatusText">متوقف</span>
         </div>
 
         <div class="url-box hidden" id="serverUrlBox">
-          <span>آدرس سایت:</span>
+          <span>آدرس:</span>
           <a id="serverUrl" href="#" target="_blank" rel="noopener"></a>
         </div>
 
         <div class="actions">
           <button id="startServerBtn" class="primary">استارت سرور</button>
-          <button id="stopServerBtn" class="secondary" disabled>توقف سرور</button>
-          <button id="openSiteBtn" class="secondary" disabled>باز کردن در مرورگر</button>
-          <button id="openProjectBtn" class="secondary" disabled>باز کردن پوشه</button>
+          <button id="stopServerBtn" class="secondary" disabled>توقف</button>
+          <button id="openSiteBtn" class="secondary" disabled>مرورگر</button>
+          <button id="openProjectBtn" class="secondary" disabled>پوشه</button>
         </div>
 
         <section class="log-panel">
@@ -125,7 +131,7 @@
           <pre id="serverLog" aria-live="polite"></pre>
         </section>
       </section>
-    </main>
+    </div>
   </div>
   <script src="app.js"></script>
 </body>

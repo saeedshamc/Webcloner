@@ -1,3 +1,4 @@
+pub mod bundled_runtimes;
 pub mod downloader;
 pub mod local_server;
 pub mod rewriter;
