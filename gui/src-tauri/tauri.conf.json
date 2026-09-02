@@ -24,6 +24,9 @@
       "active": true,
       "targets": "all",
       "identifier": "ir.saeedshamsi.webcloner",
+      "resources": [
+        "../resources/runtimes/"
+      ],
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
@@ -37,8 +40,8 @@
     "windows": [
       {
         "title": "webcloner",
-        "width": 820,
-        "height": 820,
+        "width": 1100,
+        "height": 780,
         "resizable": true,
         "fullscreen": false
       }

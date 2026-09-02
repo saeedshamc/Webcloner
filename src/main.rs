@@ -109,6 +109,7 @@ fn main() -> anyhow::Result<()> {
                 concurrency,
                 timeout_secs: timeout,
                 user_agent,
+                on_progress: None,
             };
             downloader::run(opts)?;
 

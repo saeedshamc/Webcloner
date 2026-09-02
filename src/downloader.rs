@@ -1,6 +1,6 @@
 use crate::rewriter;
 use crate::utils;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -18,6 +18,18 @@ pub struct CrawlOptions {
     pub concurrency: usize,
     pub timeout_secs: u64,
     pub user_agent: String,
+    /// Optional callback for live progress messages (used by the GUI).
+    pub on_progress: Option<Arc<dyn Fn(String) + Send + Sync>>,
+}
+
+impl CrawlOptions {
+    fn log(&self, message: impl Into<String>) {
+        let message = message.into();
+        println!("{message}");
+        if let Some(cb) = &self.on_progress {
+            cb(message);
+        }
+    }
 }
 
 struct PageRecord {
@@ -40,7 +52,7 @@ pub fn run(opts: CrawlOptions) -> Result<()> {
     rt.block_on(run_async(opts))
 }
 
-async fn run_async(opts: CrawlOptions) -> Result<()> {
+pub async fn run_async(opts: CrawlOptions) -> Result<()> {
     let start_url = Url::parse(&opts.start_url)
         .with_context(|| format!("'{}' is not a valid URL", opts.start_url))?;
     let site_host = start_url
@@ -53,25 +65,29 @@ async fn run_async(opts: CrawlOptions) -> Result<()> {
     let client = Client::builder()
         .user_agent(opts.user_agent.clone())
         .timeout(Duration::from_secs(opts.timeout_secs))
+        .connect_timeout(Duration::from_secs(opts.timeout_secs.min(15)))
+        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .context("failed to build HTTP client")?;
 
     // --- Global state shared across the whole crawl ---
-    // url string -> relative path on disk (for every asset AND page we've saved)
     let url_map: Arc<Mutex<HashMap<String, PathBuf>>> = Arc::new(Mutex::new(HashMap::new()));
     let semaphore = Arc::new(tokio::sync::Semaphore::new(opts.concurrency.max(1)));
 
     let mut pages: Vec<PageRecord> = Vec::new();
     let mut css_records: Vec<CssRecord> = Vec::new();
+    let mut fetch_errors: Vec<String> = Vec::new();
 
     let mut visited_pages: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<(Url, usize)> = VecDeque::new();
     queue.push_back((start_url.clone(), 0));
     visited_pages.insert(normalize(&start_url));
 
-    println!("🌐 Cloning {} → {}", start_url, opts.out_dir.display());
+    opts.log(format!(
+        "🌐 Cloning {start_url} → {}",
+        opts.out_dir.display()
+    ));
 
-    // ---------- Phase 1: crawl pages (BFS), collecting page HTML + asset refs ----------
     let mut pending_assets: HashSet<String> = HashSet::new();
     let mut asset_download_queue: VecDeque<Url> = VecDeque::new();
 
@@ -83,12 +99,16 @@ async fn run_async(opts: CrawlOptions) -> Result<()> {
         let resp = match client.get(page_url.clone()).send().await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("  ⚠ skip page {page_url} ({e})");
+                let msg = format!("⚠ skip page {page_url} ({e})");
+                opts.log(&msg);
+                fetch_errors.push(msg);
                 continue;
             }
         };
         if !resp.status().is_success() {
-            eprintln!("  ⚠ skip page {page_url} (HTTP {})", resp.status());
+            let msg = format!("⚠ skip page {page_url} (HTTP {})", resp.status());
+            opts.log(&msg);
+            fetch_errors.push(msg);
             continue;
         }
         let content_type = resp
@@ -96,14 +116,24 @@ async fn run_async(opts: CrawlOptions) -> Result<()> {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let bytes = resp.bytes().await.unwrap_or_default();
+        let bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                let msg = format!("⚠ skip page {page_url} (read body: {e})");
+                opts.log(&msg);
+                fetch_errors.push(msg);
+                continue;
+            }
+        };
 
         if !utils::is_probably_html(content_type.as_deref(), &bytes) {
-            eprintln!("  ⚠ skip non-HTML page {page_url}");
+            let msg = format!("⚠ skip non-HTML page {page_url}");
+            opts.log(&msg);
+            fetch_errors.push(msg);
             continue;
         }
         let html = String::from_utf8_lossy(&bytes).to_string();
-        println!("  📄 [{}] {page_url}", pages.len() + 1);
+        opts.log(format!("📄 [{}] {page_url}", pages.len() + 1));
 
         let rel_path = utils::url_to_local_path(&page_url, &site_host);
         url_map
@@ -146,11 +176,20 @@ async fn run_async(opts: CrawlOptions) -> Result<()> {
         });
     }
 
-    println!(
+    if pages.is_empty() {
+        let details = if fetch_errors.is_empty() {
+            "اتصال به اینترنت، فایروال، یا آدرس سایت را بررسی کنید.".to_string()
+        } else {
+            fetch_errors.join("\n")
+        };
+        bail!("هیچ صفحه‌ای دانلود نشد.\n{details}");
+    }
+
+    opts.log(format!(
         "✅ Crawled {} page(s). Downloading {} asset(s)...",
         pages.len(),
         asset_download_queue.len()
-    );
+    ));
 
     // ---------- Phase 2: download assets (recursively resolving CSS-referenced assets) ----------
     while !asset_download_queue.is_empty() {
@@ -202,15 +241,18 @@ async fn run_async(opts: CrawlOptions) -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("  ⚠ asset failed {asset_url} ({e})");
+                        opts.log(format!("⚠ asset failed {asset_url} ({e})"));
                     }
                 }
             }
         }
     }
 
-    println!("✅ Downloaded {} asset(s).", url_map.lock().unwrap().len());
-    println!("✍️  Rewriting references for offline use...");
+    opts.log(format!(
+        "✅ Downloaded {} asset(s).",
+        url_map.lock().unwrap().len()
+    ));
+    opts.log("✍️  Rewriting references for offline use...");
 
     // ---------- Phase 3: rewrite + write everything to disk ----------
     let map_snapshot = url_map.lock().unwrap().clone();
@@ -252,12 +294,12 @@ async fn run_async(opts: CrawlOptions) -> Result<()> {
     // so double-clicking the folder / opening file:// just works.
     ensure_root_index(&opts.out_dir, &pages, &site_host)?;
 
-    println!(
+    opts.log(format!(
         "🎉 Done. Offline site saved to: {}\n   Open {}/index.html in a browser, or run:\n   webcloner serve {}",
         opts.out_dir.display(),
         opts.out_dir.display(),
         opts.out_dir.display()
-    );
+    ));
 
     Ok(())
 }

@@ -52,6 +52,16 @@ if ($env:Path -notlike "*$cargoBin*") {
 
 Ensure-TauriCli $CargoExe
 
+$RuntimesDir = Join-Path $Here "resources\runtimes"
+$PhpExe = Join-Path $RuntimesDir "php\php.exe"
+if (-not (Test-Path $PhpExe)) {
+    Write-Host ""
+    Write-Host "Note: bundled PHP/.NET not installed yet." -ForegroundColor Yellow
+    Write-Host "For PHP/ASP.NET local server, run once from repo root:" -ForegroundColor Yellow
+    Write-Host "  .\scripts\setup-runtimes.ps1"
+    Write-Host ""
+}
+
 $TargetDir = Join-Path $Here "src-tauri\target"
 $env:CARGO_TARGET_DIR = $TargetDir
 
