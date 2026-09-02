@@ -2,9 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::Manager;
 use url::Url;
-use webcloner::{downloader, zipper};
+use webcloner::{
+    downloader, local_server::LocalServer, local_server::ProjectScan, local_server::ServerBackend,
+    local_server::ServerStatus, zipper,
+};
+
+struct AppState {
+    local_server: Mutex<LocalServer>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +32,21 @@ struct DownloadOptions {
 #[serde(rename_all = "camelCase")]
 struct DownloadResult {
     out_dir: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartServerOptions {
+    project_dir: String,
+    port: u16,
+    backend: ServerBackend,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartServerResult {
+    url: String,
     message: String,
 }
 
@@ -130,6 +153,23 @@ fn run_download(options: DownloadOptions) -> Result<DownloadResult, String> {
     })
 }
 
+fn validate_project_dir(project_dir: &str) -> Result<PathBuf, String> {
+    let dir = PathBuf::from(project_dir.trim());
+    if dir.as_os_str().is_empty() {
+        return Err("پوشه پروژه را انتخاب کنید.".into());
+    }
+    if !dir.is_absolute() {
+        return Err("مسیر پروژه باید کامل باشد.".into());
+    }
+    if !dir.exists() {
+        return Err(format!("پوشه وجود ندارد: {}", dir.display()));
+    }
+    if !dir.is_dir() {
+        return Err(format!("مسیر انتخاب‌شده پوشه نیست: {}", dir.display()));
+    }
+    Ok(dir)
+}
+
 #[tauri::command]
 fn get_default_save_dir() -> String {
     default_save_dir()
@@ -142,6 +182,57 @@ fn pick_output_folder() -> Result<Option<String>, String> {
         .pick_folder();
 
     Ok(picked.map(|p| p.display().to_string()))
+}
+
+#[tauri::command]
+fn pick_project_folder() -> Result<Option<String>, String> {
+    let picked = tauri::api::dialog::blocking::FileDialogBuilder::new()
+        .set_title("انتخاب پوشه پروژه")
+        .pick_folder();
+
+    Ok(picked.map(|p| p.display().to_string()))
+}
+
+#[tauri::command]
+fn scan_local_project(project_dir: String) -> Result<ProjectScan, String> {
+    let dir = validate_project_dir(&project_dir)?;
+    LocalServer::scan_project(&dir).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn start_local_server(
+    options: StartServerOptions,
+    state: tauri::State<AppState>,
+) -> Result<StartServerResult, String> {
+    let dir = validate_project_dir(&options.project_dir)?;
+    let port = options.port.clamp(1024, 65535);
+    let server = state.local_server.lock().map_err(|e| e.to_string())?;
+    let url = server
+        .start(dir, port, options.backend)
+        .map_err(|e| e.to_string())?;
+
+    let backend_label = match options.backend {
+        ServerBackend::Static => "استاتیک",
+        ServerBackend::Php => "PHP",
+        ServerBackend::AspNet => "ASP.NET",
+    };
+
+    Ok(StartServerResult {
+        url: url.clone(),
+        message: format!("سرور {backend_label} روی {url} در حال اجراست."),
+    })
+}
+
+#[tauri::command]
+fn stop_local_server(state: tauri::State<AppState>) -> Result<(), String> {
+    let server = state.local_server.lock().map_err(|e| e.to_string())?;
+    server.stop().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_local_server_status(state: tauri::State<AppState>) -> Result<ServerStatus, String> {
+    let server = state.local_server.lock().map_err(|e| e.to_string())?;
+    Ok(server.status())
 }
 
 #[tauri::command]
@@ -160,14 +251,37 @@ fn open_folder(path: String, window: tauri::Window) -> Result<(), String> {
     tauri::api::shell::open(&window.shell_scope(), path, None).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_url(url: String, window: tauri::Window) -> Result<(), String> {
+    tauri::api::shell::open(&window.shell_scope(), url, None).map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
+        .manage(AppState {
+            local_server: Mutex::new(LocalServer::new()),
+        })
         .invoke_handler(tauri::generate_handler![
             get_default_save_dir,
             pick_output_folder,
+            pick_project_folder,
+            scan_local_project,
+            start_local_server,
+            stop_local_server,
+            get_local_server_status,
             download_site,
-            open_folder
+            open_folder,
+            open_url
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running webcloner GUI");
+        .build(tauri::generate_context!())
+        .expect("error while building webcloner GUI")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    if let Ok(server) = state.local_server.lock() {
+                        let _ = server.stop();
+                    }
+                }
+            }
+        });
 }

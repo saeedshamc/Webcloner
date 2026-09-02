@@ -4510,6 +4510,7 @@ dependencies = [
  "regex",
  "reqwest",
  "scraper",
+ "serde",
  "sha2",
  "tinystr",
  "tokio",
