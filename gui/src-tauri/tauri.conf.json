@@ -15,6 +15,9 @@
       "all": false,
       "shell": {
         "open": true
+      },
+      "dialog": {
+        "open": true
       }
     },
     "bundle": {
