@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>webcloner</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="logo">🌐</div>
+      <div>
+        <h1>webcloner</h1>
+        <p>کلون کردن سایت برای استفاده آفلاین</p>
+      </div>
+    </header>
+
+    <main>
+      <label class="field">
+        <span>آدرس سایت</span>
+        <input id="url" type="url" placeholder="https://example.com" spellcheck="false" />
+      </label>
+
+      <div class="grid">
+        <label class="field">
+          <span>پوشه خروجی</span>
+          <input id="out" type="text" value="cloned-site" />
+        </label>
+        <label class="field">
+          <span>حداکثر صفحات</span>
+          <input id="maxPages" type="number" min="1" max="500" value="40" />
+        </label>
+        <label class="field">
+          <span>عمق کرال</span>
+          <input id="maxDepth" type="number" min="0" max="10" value="3" />
+        </label>
+        <label class="field">
+          <span>دانلود همزمان</span>
+          <input id="concurrency" type="number" min="1" max="32" value="8" />
+        </label>
+      </div>
+
+      <div class="checks">
+        <label><input id="externalAssets" type="checkbox" checked /> دانلود assetهای خارجی (CDN، فونت و...)</label>
+        <label><input id="followExternal" type="checkbox" /> دنبال کردن صفحات دامنه‌های دیگر</label>
+        <label><input id="zip" type="checkbox" /> ساخت فایل ZIP بعد از دانلود</label>
+      </div>
+
+      <div class="actions">
+        <button id="downloadBtn" class="primary">شروع دانلود</button>
+        <button id="openBtn" class="secondary" disabled>باز کردن پوشه</button>
+      </div>
+
+      <section class="log-panel">
+        <div class="log-header">گزارش</div>
+        <pre id="log" aria-live="polite"></pre>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

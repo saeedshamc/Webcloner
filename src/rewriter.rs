@@ -29,7 +29,7 @@ pub fn extract_html_asset_refs(html: &str, base: &Url) -> Vec<Reference> {
         ("source[src]", "src"),
         ("video[src]", "src"),
         ("video[poster]", "poster"),
-        ("audio[src]", "audio"),
+        ("audio[src]", "src"),
         ("embed[src]", "src"),
         ("object[data]", "data"),
         ("iframe[src]", "src"),
@@ -143,9 +143,16 @@ fn css_url_regex() -> &'static Regex {
     })
 }
 
-fn css_import_regex() -> &'static Regex {
+fn css_import_quoted_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"@import\s+['"]([^'"]+)['"]"#).expect("valid regex"))
+}
+
+fn css_import_url_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"@import\s+url\(\s*['"]?([^'")]+)['"]?\s*\)"#).expect("valid regex")
+    })
 }
 
 fn extract_css_url_literals(css: &str) -> Vec<String> {
@@ -153,7 +160,10 @@ fn extract_css_url_literals(css: &str) -> Vec<String> {
     for cap in css_url_regex().captures_iter(css) {
         out.push(cap[1].to_string());
     }
-    for cap in css_import_regex().captures_iter(css) {
+    for cap in css_import_quoted_regex().captures_iter(css) {
+        out.push(cap[1].to_string());
+    }
+    for cap in css_import_url_regex().captures_iter(css) {
         out.push(cap[1].to_string());
     }
     out

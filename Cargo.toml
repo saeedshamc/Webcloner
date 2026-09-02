@@ -1,9 +1,13 @@
 [package]
 name = "webcloner"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Clone a website (HTML/CSS/JS/images/fonts) for fully offline use — zip, local server, or standalone desktop app."
 authors = ["Saeed"]
+
+[lib]
+name = "webcloner"
+path = "src/lib.rs"
 
 [[bin]]
 name = "webcloner"
