@@ -38,6 +38,8 @@ tinystr = "=0.7.6"
 icu_normalizer = "=1.5.0"
 idna_adapter = "=1.1.0"
 tokio-util = "=0.7.10"
+
+[target.'cfg(unix)'.dependencies]
 openssl-sys = "=0.9.103"
 openssl = "=0.10.66"
 
