@@ -1,10 +1,5 @@
-mod downloader;
-mod rewriter;
-mod zipper;
-mod serve;
-mod utils;
-
 use clap::{Parser, Subcommand};
+use webcloner::{downloader, serve, zipper};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -63,7 +58,7 @@ enum Commands {
         zip: bool,
 
         /// User-Agent header to send
-        #[arg(long, default_value = "webcloner/0.1 (+offline mirror tool)")]
+        #[arg(long, default_value = "webcloner/1.0 (+offline mirror tool)")]
         user_agent: String,
     },
 
