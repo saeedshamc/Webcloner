@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::Manager;
 use webcloner::{downloader, zipper};
 
 #[derive(Debug, Deserialize)]
@@ -60,8 +61,8 @@ fn download_site(options: DownloadOptions) -> Result<DownloadResult, String> {
 }
 
 #[tauri::command]
-fn open_folder(path: String) -> Result<(), String> {
-    tauri::api::shell::open(&path).map_err(|e| e.to_string())
+fn open_folder(path: String, window: tauri::Window) -> Result<(), String> {
+    tauri::api::shell::open(&window.shell_scope(), path, None).map_err(|e| e.to_string())
 }
 
 fn main() {
