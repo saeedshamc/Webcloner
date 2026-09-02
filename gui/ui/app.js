@@ -1,7 +1,9 @@
 const { invoke } = window.__TAURI__.tauri;
 
 const urlEl = document.getElementById("url");
-const outEl = document.getElementById("out");
+const saveDirEl = document.getElementById("saveDir");
+const outNameEl = document.getElementById("outName");
+const pickDirBtn = document.getElementById("pickDirBtn");
 const maxPagesEl = document.getElementById("maxPages");
 const maxDepthEl = document.getElementById("maxDepth");
 const concurrencyEl = document.getElementById("concurrency");
@@ -24,25 +26,65 @@ function appendLog(text, kind = "") {
 
 function setBusy(busy) {
   downloadBtn.disabled = busy;
+  pickDirBtn.disabled = busy;
   openBtn.disabled = busy || !lastOutDir;
 }
 
+function normalizeUrlInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed.replace(/^\/+/, "")}`;
+}
+
+async function initSaveDir() {
+  try {
+    const defaultDir = await invoke("get_default_save_dir");
+    if (defaultDir && !saveDirEl.value) {
+      saveDirEl.value = defaultDir;
+    }
+  } catch (err) {
+    appendLog(`خطا در خواندن مسیر پیش‌فرض: ${err}`, "err");
+  }
+}
+
+pickDirBtn.addEventListener("click", async () => {
+  try {
+    const picked = await invoke("pick_output_folder");
+    if (picked) {
+      saveDirEl.value = picked;
+    }
+  } catch (err) {
+    appendLog(String(err), "err");
+  }
+});
+
 downloadBtn.addEventListener("click", async () => {
-  const url = urlEl.value.trim();
+  const url = normalizeUrlInput(urlEl.value);
   if (!url) {
     appendLog("لطفاً آدرس سایت را وارد کنید.", "err");
     return;
   }
 
+  const saveDir = saveDirEl.value.trim();
+  if (!saveDir) {
+    appendLog("لطفاً محل ذخیره‌سازی را انتخاب کنید.", "err");
+    return;
+  }
+
+  const outName = outNameEl.value.trim() || "cloned-site";
+  urlEl.value = url;
+
   logEl.textContent = "";
   setBusy(true);
-  appendLog("در حال دانلود...");
+  appendLog(`در حال دانلود از ${url} ...`);
 
   try {
     const result = await invoke("download_site", {
       options: {
         url,
-        out: outEl.value.trim() || "cloned-site",
+        saveDir,
+        outName,
         maxPages: Number(maxPagesEl.value) || 40,
         maxDepth: Number(maxDepthEl.value) || 3,
         concurrency: Number(concurrencyEl.value) || 8,
@@ -69,3 +111,5 @@ openBtn.addEventListener("click", async () => {
     appendLog(String(err), "err");
   }
 });
+
+initSaveDir();

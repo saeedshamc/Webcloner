@@ -19,14 +19,24 @@
     <main>
       <label class="field">
         <span>آدرس سایت</span>
-        <input id="url" type="url" placeholder="https://example.com" spellcheck="false" />
+        <input id="url" type="text" placeholder="example.com یا https://example.com" spellcheck="false" autocomplete="off" />
+        <small class="hint">نیازی به https:// نیست — خودکار اضافه می‌شود.</small>
+      </label>
+
+      <label class="field">
+        <span>محل ذخیره‌سازی</span>
+        <div class="path-row">
+          <input id="saveDir" type="text" readonly placeholder="پوشه را انتخاب کنید..." />
+          <button type="button" id="pickDirBtn" class="secondary">انتخاب پوشه</button>
+        </div>
+      </label>
+
+      <label class="field">
+        <span>نام پوشه خروجی</span>
+        <input id="outName" type="text" value="cloned-site" spellcheck="false" />
       </label>
 
       <div class="grid">
-        <label class="field">
-          <span>پوشه خروجی</span>
-          <input id="out" type="text" value="cloned-site" />
-        </label>
         <label class="field">
           <span>حداکثر صفحات</span>
           <input id="maxPages" type="number" min="1" max="500" value="40" />

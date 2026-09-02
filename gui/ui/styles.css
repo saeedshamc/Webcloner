@@ -80,6 +80,28 @@ main {
   color: var(--muted);
 }
 
+.hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: -4px;
+}
+
+.path-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.path-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.path-row button {
+  white-space: nowrap;
+  padding-inline: 16px;
+}
+
 input[type="url"],
 input[type="text"],
 input[type="number"] {
@@ -197,5 +219,9 @@ button:disabled {
 @media (max-width: 640px) {
   .grid {
     grid-template-columns: 1fr;
+  }
+
+  .path-row {
+    flex-direction: column;
   }
 }
