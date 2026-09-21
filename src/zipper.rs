@@ -43,3 +43,23 @@ pub fn zip_dir(src_dir: &Path, zip_path: &Path) -> Result<()> {
     zip.finish()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn zips_simple_folder() {
+        let dir = std::env::temp_dir().join(format!("wc-zip-{}", std::process::id()));
+        let zip_path = dir.with_extension("zip");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&zip_path);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.html"), b"<html>ok</html>").unwrap();
+        zip_dir(&dir, &zip_path).unwrap();
+        assert!(zip_path.is_file());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&zip_path);
+    }
+}

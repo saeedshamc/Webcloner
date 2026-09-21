@@ -232,6 +232,69 @@ button:disabled {
   background: #2f3d55;
 }
 
+.danger {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.danger:hover:not(:disabled) {
+  background: #991b1b;
+}
+
+.progress-wrap {
+  margin: 12px 0 4px;
+}
+
+.progress-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #0d131c;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2563eb, #22c55e);
+  transition: width 0.2s ease;
+}
+
+.recent-box {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: var(--panel-2);
+}
+
+.recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.recent-item {
+  background: #243044;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.recent-item:hover {
+  background: #2f3d55;
+}
+
 .log-panel {
   margin-top: 16px;
   border: 1px solid var(--border);

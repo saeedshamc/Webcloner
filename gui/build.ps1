@@ -79,3 +79,4 @@ finally {
 
 Write-Host ""
 Write-Host "Done. Find the GUI under src-tauri\target\release\bundle\" -ForegroundColor Green
+Write-Host "Install notes: see gui\INSTALL.md" -ForegroundColor Cyan

@@ -24,6 +24,21 @@
           <span id="downloadBadge" class="badge hidden">در حال دانلود</span>
         </div>
 
+        <div id="recentClones" class="recent-box hidden">
+          <div class="scan-title">اخیر</div>
+          <div id="recentClonesList" class="recent-list"></div>
+        </div>
+
+        <label class="field">
+          <span>پروفایل کلون</span>
+          <select id="cloneProfile">
+            <option value="custom">سفارشی</option>
+            <option value="fast">سریع</option>
+            <option value="full" selected>کامل</option>
+            <option value="assetsOnly">فقط assets صفحه اول</option>
+          </select>
+        </label>
+
         <label class="field">
           <span>آدرس سایت</span>
           <input id="url" type="text" placeholder="example.com یا https://example.com" spellcheck="false" autocomplete="off" />
@@ -61,13 +76,22 @@
         <div class="checks">
           <label><input id="externalAssets" type="checkbox" checked /> assetهای خارجی (CDN، فونت)</label>
           <label><input id="followExternal" type="checkbox" /> صفحات دامنه‌های دیگر</label>
+          <label><input id="blockTracking" type="checkbox" checked /> رد tracking/ads</label>
+          <label><input id="reportBroken" type="checkbox" checked /> گزارش لینک شکسته</label>
           <label><input id="zip" type="checkbox" /> ساخت ZIP بعد از دانلود</label>
+        </div>
+
+        <div class="progress-wrap hidden" id="progressWrap">
+          <div class="progress-label" id="progressLabel">۰٪</div>
+          <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
         </div>
 
         <div class="actions">
           <button id="downloadBtn" class="primary">شروع دانلود</button>
+          <button id="cancelDownloadBtn" class="danger" disabled>توقف دانلود</button>
           <button id="openBtn" class="secondary" disabled>باز کردن پوشه</button>
           <button id="useForServerBtn" class="secondary" disabled>سرو همین پوشه →</button>
+          <button id="desktopPkgBtn" class="secondary" disabled>ساخت اپ دسکتاپ</button>
         </div>
 
         <section class="log-panel">
@@ -82,13 +106,24 @@
           <span id="serverBadge" class="badge hidden">فعال</span>
         </div>
 
+        <div id="recentServers" class="recent-box hidden">
+          <div class="scan-title">اخیر</div>
+          <div id="recentServersList" class="recent-list"></div>
+        </div>
+
+        <div id="runtimeStatusBox" class="scan-box">
+          <div class="scan-title">Runtime داخلی</div>
+          <div id="runtimeStatusText" class="scan-tags">در حال بررسی...</div>
+          <small class="hint" id="runtimeHint">اگر PHP/.NET نیست: از ریشه پروژه .\scripts\setup-runtimes.ps1</small>
+        </div>
+
         <label class="field">
           <span>پوشه پروژه</span>
           <div class="path-row">
             <input id="projectDir" type="text" readonly placeholder="پوشه HTML/PHP/ASP..." />
             <button type="button" id="pickProjectBtn" class="secondary">انتخاب</button>
           </div>
-          <small class="hint">می‌توانید حین دانلود هم سرور را روی همان پوشه خروجی بالا بیاورید.</small>
+          <small class="hint">می‌توانید حین دانلود هم سرور را بالا بیاورید.</small>
         </label>
 
         <div id="projectScan" class="scan-box hidden">
@@ -107,6 +142,10 @@
           </label>
         </div>
 
+        <div class="checks">
+          <label><input id="autoPort" type="checkbox" checked /> پورت خودکار اگر اشغال بود</label>
+        </div>
+
         <p id="backendNote" class="hint backend-note"></p>
 
         <div class="status-box">
@@ -122,6 +161,7 @@
         <div class="actions">
           <button id="startServerBtn" class="primary">استارت سرور</button>
           <button id="stopServerBtn" class="secondary" disabled>توقف</button>
+          <button id="previewBtn" class="secondary" disabled>پیش‌نمایش</button>
           <button id="openSiteBtn" class="secondary" disabled>مرورگر</button>
           <button id="openProjectBtn" class="secondary" disabled>پوشه</button>
         </div>

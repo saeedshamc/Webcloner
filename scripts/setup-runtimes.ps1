@@ -64,4 +64,10 @@ if (-not (Test-Path $DotnetExe)) {
 
 Write-Host ""
 Write-Host "Done. Runtimes are in: $RuntimesDir"
-Write-Host "Rebuild the GUI so Tauri bundles them:  cd gui; .\build.ps1"
+Write-Host "Expected:"
+Write-Host "  $PhpExe"
+Write-Host "  $DotnetExe"
+Write-Host ""
+Write-Host "GUI status panel will show PHP/.NET as 'داخلی' after rebuild."
+Write-Host "Rebuild the GUI:  cd gui; .\build.ps1"
+Write-Host "Or for development:  cd gui\src-tauri; cargo tauri dev"

@@ -1,21 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tauri::Manager;
+use tauri::{Manager, WindowBuilder, WindowUrl};
 use url::Url;
 use webcloner::{
-    downloader, local_server::LocalServer, local_server::ProjectScan, local_server::ServerBackend,
-    local_server::ServerStatus, zipper,
+    downloader, local_server::LocalServer, local_server::ProjectScan, local_server::RuntimeStatus,
+    local_server::ServerBackend, local_server::ServerStatus, net_util, zipper,
 };
 
 struct AppState {
     local_server: Arc<LocalServer>,
     download_active: Arc<AtomicBool>,
+    download_cancel: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +32,8 @@ struct DownloadOptions {
     include_external_assets: bool,
     follow_external_pages: bool,
     zip: bool,
+    block_tracking: bool,
+    report_broken_links: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +41,7 @@ struct DownloadOptions {
 struct DownloadResult {
     out_dir: String,
     message: String,
+    cancelled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,12 +56,49 @@ struct StartServerOptions {
     project_dir: String,
     port: u16,
     backend: ServerBackend,
+    auto_port: bool,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StartServerResult {
     url: String,
+    port: u16,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    save_dir: Option<String>,
+    out_name: Option<String>,
+    max_pages: Option<usize>,
+    max_depth: Option<usize>,
+    concurrency: Option<usize>,
+    include_external_assets: Option<bool>,
+    follow_external_pages: Option<bool>,
+    zip: Option<bool>,
+    block_tracking: Option<bool>,
+    report_broken_links: Option<bool>,
+    port: Option<u16>,
+    auto_port: Option<bool>,
+    recent: Vec<RecentItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecentItem {
+    path: String,
+    kind: String,
+    url: Option<String>,
+    port: Option<u16>,
+    at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopPackageResult {
+    output_dir: String,
     message: String,
 }
 
@@ -65,13 +107,11 @@ fn normalize_start_url(input: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Err("آدرس سایت خالی است.".into());
     }
-
     let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         trimmed.to_string()
     } else {
         format!("https://{}", trimmed.trim_start_matches('/'))
     };
-
     Url::parse(&with_scheme)
         .map(|u| u.to_string())
         .map_err(|_| format!("آدرس «{input}» معتبر نیست."))
@@ -109,7 +149,6 @@ fn resolve_output_dir(save_dir: &str, out_name: &str) -> Result<PathBuf, String>
     if !base.is_dir() {
         return Err(format!("مسیر انتخاب‌شده پوشه نیست: {}", base.display()));
     }
-
     Ok(base.join(sanitize_folder_name(out_name)))
 }
 
@@ -155,9 +194,86 @@ fn validate_project_dir(project_dir: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn app_data_dir() -> PathBuf {
+    if let Ok(profile) = std::env::var("APPDATA") {
+        return PathBuf::from(profile).join("webcloner");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".webcloner");
+    }
+    PathBuf::from(".webcloner")
+}
+
+fn settings_path() -> PathBuf {
+    app_data_dir().join("settings.json")
+}
+
+fn load_settings() -> AppSettings {
+    let path = settings_path();
+    if let Ok(raw) = fs::read_to_string(path) {
+        serde_json::from_str(&raw).unwrap_or_default()
+    } else {
+        AppSettings::default()
+    }
+}
+
+fn save_settings(settings: &AppSettings) -> Result<(), String> {
+    let dir = app_data_dir();
+    fs::create_dir_all(&dir).map_err(|e| format!("ساخت پوشه تنظیمات ناموفق: {e}"))?;
+    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    fs::write(settings_path(), raw).map_err(|e| format!("ذخیره تنظیمات ناموفق: {e}"))
+}
+
+fn push_recent(settings: &mut AppSettings, item: RecentItem) {
+    settings.recent.retain(|r| r.path != item.path || r.kind != item.kind);
+    settings.recent.insert(0, item);
+    if settings.recent.len() > 12 {
+        settings.recent.truncate(12);
+    }
+}
+
+fn now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    secs.to_string()
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &target)?;
+        } else {
+            fs::copy(&path, &target).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn get_default_save_dir() -> String {
     default_save_dir()
+}
+
+#[tauri::command]
+fn load_app_settings() -> AppSettings {
+    load_settings()
+}
+
+#[tauri::command]
+fn save_app_settings(settings: AppSettings) -> Result<(), String> {
+    save_settings(&settings)
+}
+
+#[tauri::command]
+fn suggest_free_port(preferred: u16) -> Result<u16, String> {
+    net_util::find_free_port(preferred.clamp(1024, 65535)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -169,7 +285,7 @@ async fn pick_output_folder() -> Result<Option<String>, String> {
         Ok(picked.map(|p| p.display().to_string()))
     })
     .await
-    .map_err(|e| format!("dialog task failed: {e}"))?
+    .map_err(|e| format!("دیالوگ پوشه ناموفق: {e}"))?
 }
 
 #[tauri::command]
@@ -181,7 +297,7 @@ async fn pick_project_folder() -> Result<Option<String>, String> {
         Ok(picked.map(|p| p.display().to_string()))
     })
     .await
-    .map_err(|e| format!("dialog task failed: {e}"))?
+    .map_err(|e| format!("دیالوگ پوشه ناموفق: {e}"))?
 }
 
 #[tauri::command]
@@ -205,15 +321,20 @@ async fn scan_local_project(
 }
 
 #[tauri::command]
+fn get_runtime_status(state: tauri::State<AppState>) -> RuntimeStatus {
+    state.local_server.runtime_status()
+}
+
+#[tauri::command]
 async fn start_local_server(
     options: StartServerOptions,
     state: tauri::State<'_, AppState>,
 ) -> Result<StartServerResult, String> {
     let dir = validate_project_dir(&options.project_dir)?;
     let port = options.port.clamp(1024, 65535);
-    let url = state
+    let (url, used_port) = state
         .local_server
-        .start_async(dir, port, options.backend)
+        .start_async(dir.clone(), port, options.backend, options.auto_port)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -223,9 +344,25 @@ async fn start_local_server(
         ServerBackend::AspNet => "ASP.NET",
     };
 
+    let mut settings = load_settings();
+    settings.port = Some(used_port);
+    settings.auto_port = Some(options.auto_port);
+    push_recent(
+        &mut settings,
+        RecentItem {
+            path: dir.display().to_string(),
+            kind: "server".into(),
+            url: Some(url.clone()),
+            port: Some(used_port),
+            at: now_iso(),
+        },
+    );
+    let _ = save_settings(&settings);
+
     Ok(StartServerResult {
         url: url.clone(),
-        message: format!("سرور {backend_label} روی پورت {port} فعال شد:\n{url}"),
+        port: used_port,
+        message: format!("سرور {backend_label} روی پورت {used_port} فعال شد:\n{url}"),
     })
 }
 
@@ -251,6 +388,15 @@ fn get_download_status(state: tauri::State<AppState>) -> DownloadStatus {
 }
 
 #[tauri::command]
+fn cancel_download(state: tauri::State<AppState>) -> Result<(), String> {
+    if !state.download_active.load(Ordering::SeqCst) {
+        return Err("دانلود فعالی وجود ندارد.".into());
+    }
+    state.download_cancel.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
 async fn download_site(
     options: DownloadOptions,
     window: tauri::Window,
@@ -264,18 +410,21 @@ async fn download_site(
         return Err("یک دانلود دیگر در حال اجراست.".into());
     }
 
-    struct DownloadReset {
-        flag: Arc<AtomicBool>,
-    }
+    state.download_cancel.store(false, Ordering::SeqCst);
 
+    struct DownloadReset {
+        active: Arc<AtomicBool>,
+        cancel: Arc<AtomicBool>,
+    }
     impl Drop for DownloadReset {
         fn drop(&mut self) {
-            self.flag.store(false, Ordering::SeqCst);
+            self.active.store(false, Ordering::SeqCst);
+            self.cancel.store(false, Ordering::SeqCst);
         }
     }
-
     let _reset = DownloadReset {
-        flag: state.download_active.clone(),
+        active: state.download_active.clone(),
+        cancel: state.download_cancel.clone(),
     };
 
     let start_url = normalize_start_url(&options.url)?;
@@ -285,9 +434,13 @@ async fn download_site(
     let progress = Arc::new(move |line: String| {
         let _ = window_for_progress.emit("download-progress", line);
     });
+    let window_for_event = window.clone();
+    let progress_event = Arc::new(move |ev: downloader::ProgressEvent| {
+        let _ = window_for_event.emit("download-progress-event", ev);
+    });
 
     let crawl_opts = downloader::CrawlOptions {
-        start_url,
+        start_url: start_url.clone(),
         out_dir: out_dir.clone(),
         max_pages: options.max_pages.max(1),
         max_depth: options.max_depth,
@@ -296,12 +449,30 @@ async fn download_site(
         concurrency: options.concurrency.max(1),
         timeout_secs: 30,
         user_agent: "webcloner-gui/1.0 (+offline mirror tool)".to_string(),
+        block_tracking: options.block_tracking,
+        report_broken_links: options.report_broken_links,
         on_progress: Some(progress),
+        on_progress_event: Some(progress_event),
+        cancel_flag: Some(state.download_cancel.clone()),
     };
 
-    downloader::run_async(crawl_opts)
-        .await
-        .map_err(|e| e.to_string())?;
+    let crawl_result = downloader::run_async(crawl_opts).await;
+    let cancelled = state.download_cancel.load(Ordering::SeqCst);
+
+    if let Err(e) = crawl_result {
+        let msg = e.to_string();
+        if cancelled || msg.contains("لغو") {
+            return Ok(DownloadResult {
+                out_dir: out_dir.display().to_string(),
+                message: format!(
+                    "دانلود لغو شد. پوشه ناقص باقی ماند:\n{}",
+                    out_dir.display()
+                ),
+                cancelled: true,
+            });
+        }
+        return Err(msg);
+    }
 
     let mut message = format!(
         "دانلود با موفقیت انجام شد.\nپوشه: {}",
@@ -319,9 +490,33 @@ async fn download_site(
         message.push_str(&format!("\nفایل ZIP: {zip_display}"));
     }
 
+    let mut settings = load_settings();
+    settings.save_dir = Some(options.save_dir);
+    settings.out_name = Some(options.out_name);
+    settings.max_pages = Some(options.max_pages);
+    settings.max_depth = Some(options.max_depth);
+    settings.concurrency = Some(options.concurrency);
+    settings.include_external_assets = Some(options.include_external_assets);
+    settings.follow_external_pages = Some(options.follow_external_pages);
+    settings.zip = Some(options.zip);
+    settings.block_tracking = Some(options.block_tracking);
+    settings.report_broken_links = Some(options.report_broken_links);
+    push_recent(
+        &mut settings,
+        RecentItem {
+            path: out_dir.display().to_string(),
+            kind: "clone".into(),
+            url: Some(start_url),
+            port: None,
+            at: now_iso(),
+        },
+    );
+    let _ = save_settings(&settings);
+
     Ok(DownloadResult {
         out_dir: out_dir.display().to_string(),
         message,
+        cancelled: false,
     })
 }
 
@@ -335,7 +530,7 @@ async fn open_folder(path: String, window: tauri::Window) -> Result<(), String> 
         tauri::api::shell::open(&window.shell_scope(), path, None).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("open folder task failed: {e}"))?
+    .map_err(|e| format!("باز کردن پوشه ناموفق: {e}"))?
 }
 
 #[tauri::command]
@@ -344,7 +539,60 @@ async fn open_url(url: String, window: tauri::Window) -> Result<(), String> {
         tauri::api::shell::open(&window.shell_scope(), url, None).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("open url task failed: {e}"))?
+    .map_err(|e| format!("باز کردن آدرس ناموفق: {e}"))?
+}
+
+#[tauri::command]
+async fn open_preview_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if let Some(existing) = app.get_window("preview") {
+        let _ = existing.close();
+    }
+    WindowBuilder::new(&app, "preview", WindowUrl::External(url.parse().map_err(|e| format!("{e}"))?))
+        .title("پیش‌نمایش webcloner")
+        .inner_size(1000.0, 720.0)
+        .build()
+        .map_err(|e| format!("ساخت پنجره پیش‌نمایش ناموفق: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn prepare_desktop_package(project_dir: String) -> Result<DesktopPackageResult, String> {
+    let src = validate_project_dir(&project_dir)?;
+    let template = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../desktop-app-template");
+    if !template.is_dir() {
+        return Err("قالب desktop-app-template پیدا نشد.".into());
+    }
+
+    let stamp = now_iso();
+    let out = app_data_dir()
+        .join("desktop-packages")
+        .join(format!("site-{}", stamp));
+    if out.exists() {
+        fs::remove_dir_all(&out).map_err(|e| e.to_string())?;
+    }
+    copy_dir_recursive(&template, &out)?;
+
+    let dist = out.join("dist");
+    if dist.exists() {
+        fs::remove_dir_all(&dist).map_err(|e| e.to_string())?;
+    }
+    fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
+    copy_dir_recursive(&src, &dist)?;
+
+    let readme = format!(
+        "بسته دسکتاپ آماده شد.\n\n1) برای ساخت نصب‌کننده:\n   cd \"{}\"\n   .\\package.ps1 \"{}\"\n\nیا فقط از همین پوشه با cargo tauri build در src-tauri بسازید.\nمحتوای سایت در dist/ کپی شده است.\n",
+        out.display(),
+        src.display()
+    );
+    fs::write(out.join("README-NEXT.txt"), readme).map_err(|e| e.to_string())?;
+
+    Ok(DesktopPackageResult {
+        output_dir: out.display().to_string(),
+        message: format!(
+            "پوشه آماده دسکتاپ ساخته شد:\n{}\nسایت در dist/ کپی شد. راهنما: README-NEXT.txt",
+            out.display()
+        ),
+    })
 }
 
 fn main() {
@@ -352,6 +600,7 @@ fn main() {
         .manage(AppState {
             local_server: Arc::new(LocalServer::new()),
             download_active: Arc::new(AtomicBool::new(false)),
+            download_cancel: Arc::new(AtomicBool::new(false)),
         })
         .setup(|app| {
             let state = app.state::<AppState>();
@@ -369,23 +618,31 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_default_save_dir,
+            load_app_settings,
+            save_app_settings,
+            suggest_free_port,
             pick_output_folder,
             pick_project_folder,
             resolve_clone_output_path,
             scan_local_project,
+            get_runtime_status,
             start_local_server,
             stop_local_server,
             get_local_server_status,
             get_download_status,
+            cancel_download,
             download_site,
             open_folder,
-            open_url
+            open_url,
+            open_preview_window,
+            prepare_desktop_package
         ])
         .build(tauri::generate_context!())
         .expect("error while building webcloner GUI")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 if let Some(state) = app_handle.try_state::<AppState>() {
+                    state.download_cancel.store(true, Ordering::SeqCst);
                     let server = state.local_server.clone();
                     tauri::async_runtime::spawn(async move {
                         let _ = server.stop_async().await;

@@ -1,7 +1,6 @@
 use crate::bundled_runtimes::RuntimesLocator;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, RwLock};
@@ -50,6 +49,19 @@ pub struct ServerStatus {
     pub backend: Option<ServerBackend>,
     pub port: Option<u16>,
     pub busy: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStatus {
+    pub php_available: bool,
+    pub php_path: Option<String>,
+    pub php_bundled: bool,
+    pub php_note: String,
+    pub dotnet_available: bool,
+    pub dotnet_path: Option<String>,
+    pub dotnet_bundled: bool,
+    pub dotnet_note: String,
 }
 
 enum RunningServer {
@@ -116,7 +128,8 @@ impl LocalServer {
         dir: PathBuf,
         port: u16,
         backend: ServerBackend,
-    ) -> Result<String> {
+        auto_port: bool,
+    ) -> Result<(String, u16)> {
         {
             let mut guard = self.inner.lock().await;
             if guard.busy {
@@ -125,7 +138,7 @@ impl LocalServer {
             guard.busy = true;
         }
 
-        let result = self.start_async_inner(dir, port, backend).await;
+        let result = self.start_async_inner(dir, port, backend, auto_port).await;
 
         {
             let mut guard = self.inner.lock().await;
@@ -140,11 +153,22 @@ impl LocalServer {
         dir: PathBuf,
         port: u16,
         backend: ServerBackend,
-    ) -> Result<String> {
+        auto_port: bool,
+    ) -> Result<(String, u16)> {
         self.stop_running().await?;
         validate_dir(&dir)?;
 
-        let port = port.clamp(1024, 65535);
+        let requested = port.clamp(1024, 65535);
+        let port = if auto_port {
+            crate::net_util::find_free_port(requested)?
+        } else if !crate::net_util::port_is_free(requested) {
+            let alt = crate::net_util::find_free_port(requested.saturating_add(1).max(1024))?;
+            bail!(
+                "پورت {requested} اشغال است. پورت آزاد پیشنهادی: {alt} — گزینه «پورت خودکار» را روشن کنید یا پورت را عوض کنید."
+            );
+        } else {
+            requested
+        };
         let url = format!("http://127.0.0.1:{port}");
 
         let running = match backend {
@@ -153,36 +177,40 @@ impl LocalServer {
                 let php = self
                     .runtimes
                     .read()
-                    .map_err(|_| anyhow::anyhow!("runtimes lock poisoned"))?
+                    .map_err(|_| anyhow::anyhow!("قفل runtime خراب شده است."))?
                     .resolve_php()
-                    .context("PHP در دسترس نیست. scripts/setup-runtimes.ps1 را اجرا کنید.")?;
+                    .context(
+                        "PHP داخلی پیدا نشد. یک‌بار از ریشه پروژه scripts/setup-runtimes.ps1 را اجرا کنید.",
+                    )?;
                 let child = tokio::task::spawn_blocking({
                     let php = php.clone();
                     let dir = dir.clone();
                     move || spawn_php_server(&php, &dir, port)
                 })
                 .await
-                .context("PHP spawn task failed")??;
+                .context("راه‌اندازی PHP ناموفق بود.")??;
                 RunningServer::External { child }
             }
             ServerBackend::AspNet => {
                 let dotnet = self
                     .runtimes
                     .read()
-                    .map_err(|_| anyhow::anyhow!("runtimes lock poisoned"))?
+                    .map_err(|_| anyhow::anyhow!("قفل runtime خراب شده است."))?
                     .resolve_dotnet()
-                    .context(".NET در دسترس نیست. scripts/setup-runtimes.ps1 را اجرا کنید.")?;
+                    .context(
+                        ".NET داخلی پیدا نشد. یک‌بار scripts/setup-runtimes.ps1 را اجرا کنید.",
+                    )?;
                 let csproj = find_csproj(&dir).context("فایل .csproj در پروژه پیدا نشد.")?;
                 let project_dir = csproj
                     .parent()
-                    .context("مسیر پروژه نامعتبر است.")?
+                    .context("مسیر پروژه ASP.NET نامعتبر است.")?
                     .to_path_buf();
                 let child = tokio::task::spawn_blocking({
                     let dotnet = dotnet.clone();
                     move || spawn_dotnet_server(&dotnet, &project_dir, port)
                 })
                 .await
-                .context(".NET spawn task failed")??;
+                .context("راه‌اندازی ASP.NET ناموفق بود.")??;
                 RunningServer::External { child }
             }
         };
@@ -194,7 +222,41 @@ impl LocalServer {
         guard.meta.backend = Some(backend);
         guard.meta.port = Some(port);
 
-        Ok(url)
+        Ok((url, port))
+    }
+
+    pub fn runtime_status(&self) -> RuntimeStatus {
+        let runtimes = self.runtimes.read().ok();
+        let (php_path, php_bundled, php_note) = match &runtimes {
+            Some(r) => (
+                r.resolve_php().map(|p| p.display().to_string()),
+                r.resolve_php()
+                    .map(|p| p.components().count() > 1)
+                    .unwrap_or(false),
+                r.bundled_php_note(),
+            ),
+            None => (None, false, "وضعیت PHP نامشخص".into()),
+        };
+        let (dotnet_path, dotnet_bundled, dotnet_note) = match &runtimes {
+            Some(r) => (
+                r.resolve_dotnet().map(|p| p.display().to_string()),
+                r.resolve_dotnet()
+                    .map(|p| p.components().count() > 1)
+                    .unwrap_or(false),
+                r.bundled_dotnet_note(),
+            ),
+            None => (None, false, "وضعیت .NET نامشخص".into()),
+        };
+        RuntimeStatus {
+            php_available: php_path.is_some(),
+            php_path,
+            php_bundled,
+            php_note,
+            dotnet_available: dotnet_path.is_some(),
+            dotnet_path,
+            dotnet_bundled,
+            dotnet_note,
+        }
     }
 
     pub async fn stop_async(&self) -> Result<()> {
@@ -372,12 +434,8 @@ fn validate_dir(dir: &Path) -> Result<()> {
 
 async fn start_static_server(dir: PathBuf, port: u16) -> Result<RunningServer> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
-    // Bind first so a busy port returns a clean error instead of panicking.
-    let listener = std::net::TcpListener::bind(addr).with_context(|| {
-        format!("پورت {port} اشغال است یا در دسترس نیست. پورت دیگری انتخاب کنید.")
-    })?;
+    let listener = crate::net_util::bind_or_explain(port)?;
     listener.set_nonblocking(true)?;
 
     let handle = tokio::spawn(async move {
@@ -416,7 +474,7 @@ fn spawn_php_server(php: &Path, dir: &Path, port: u16) -> Result<Child> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .with_context(|| format!("failed to start PHP server with {}", php.display()))
+        .with_context(|| format!("اجرای PHP با {} ناموفق بود.", php.display()))
 }
 
 fn spawn_dotnet_server(dotnet: &Path, project_dir: &Path, port: u16) -> Result<Child> {
@@ -428,7 +486,7 @@ fn spawn_dotnet_server(dotnet: &Path, project_dir: &Path, port: u16) -> Result<C
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .with_context(|| format!("failed to start ASP.NET with {}", dotnet.display()))
+        .with_context(|| format!("اجرای ASP.NET با {} ناموفق بود.", dotnet.display()))
 }
 
 fn kill_child_process(child: &mut Child) {
@@ -458,4 +516,23 @@ fn find_csproj(dir: &Path) -> Option<PathBuf> {
                     .unwrap_or(false)
         })
         .map(|e| e.path().to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[tokio::test]
+    async fn scans_html_project() {
+        let dir = std::env::temp_dir().join(format!("wc-scan-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.html"), b"<html></html>").unwrap();
+        let server = LocalServer::new();
+        let scan = server.scan_project_async(dir.clone()).await.unwrap();
+        assert!(scan.has_html);
+        assert!(matches!(scan.recommended, ServerBackend::Static));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
