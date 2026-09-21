@@ -15,6 +15,8 @@ const reportBrokenEl = document.getElementById("reportBroken");
 const zipEl = document.getElementById("zip");
 const cloneProfileEl = document.getElementById("cloneProfile");
 const downloadBtn = document.getElementById("downloadBtn");
+const discoverBtn = document.getElementById("discoverBtn");
+const resumeBtn = document.getElementById("resumeBtn");
 const cancelDownloadBtn = document.getElementById("cancelDownloadBtn");
 const openBtn = document.getElementById("openBtn");
 const useForServerBtn = document.getElementById("useForServerBtn");
@@ -26,6 +28,13 @@ const progressFill = document.getElementById("progressFill");
 const progressLabel = document.getElementById("progressLabel");
 const recentClones = document.getElementById("recentClones");
 const recentClonesList = document.getElementById("recentClonesList");
+const discoverBox = document.getElementById("discoverBox");
+const discoverList = document.getElementById("discoverList");
+const discoverSummary = document.getElementById("discoverSummary");
+const selectAllUrlsBtn = document.getElementById("selectAllUrlsBtn");
+const clearUrlsBtn = document.getElementById("clearUrlsBtn");
+const confirmDiscoverBtn = document.getElementById("confirmDiscoverBtn");
+const resumeHint = document.getElementById("resumeHint");
 
 const projectDirEl = document.getElementById("projectDir");
 const pickProjectBtn = document.getElementById("pickProjectBtn");
@@ -63,6 +72,7 @@ let downloadBusy = false;
 let serverBusy = false;
 let serverRunning = false;
 let settingsCache = null;
+let discoveredPages = [];
 
 function appendLog(target, text, kind = "") {
   const line = document.createElement("div");
@@ -116,15 +126,89 @@ async function expectedOutputPath() {
 function setDownloadBusy(busy) {
   downloadBusy = busy;
   downloadBtn.disabled = busy;
+  discoverBtn.disabled = busy;
+  resumeBtn.disabled = busy || resumeBtn.dataset.available !== "1";
   cancelDownloadBtn.disabled = !busy;
   pickDirBtn.disabled = busy;
   cloneProfileEl.disabled = busy;
+  confirmDiscoverBtn.disabled = busy;
   openBtn.disabled = busy || !lastOutDir;
   desktopPkgBtn.disabled = busy || !lastOutDir;
   useForServerBtn.disabled = !saveDirEl.value.trim();
   downloadBadge.classList.toggle("hidden", !busy);
   downloadBadge.classList.toggle("downloading", busy);
   if (!busy) hideProgress();
+}
+
+function renderDiscoverList(pages) {
+  discoveredPages = pages || [];
+  discoverList.innerHTML = "";
+  discoveredPages.forEach((page, idx) => {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.dataset.idx = String(idx);
+    const span = document.createElement("span");
+    span.textContent = `[${page.depth}] ${page.url}`;
+    label.appendChild(cb);
+    label.appendChild(span);
+    discoverList.appendChild(label);
+  });
+  discoverBox.classList.toggle("hidden", discoveredPages.length === 0);
+  discoverSummary.textContent = `${discoveredPages.length} آدرس پیدا شد — موارد دلخواه را تأیید کنید`;
+}
+
+function selectedDiscoverUrls() {
+  return Array.from(discoverList.querySelectorAll("input[type=checkbox]:checked")).map((cb) => {
+    const idx = Number(cb.dataset.idx);
+    return discoveredPages[idx]?.url;
+  }).filter(Boolean);
+}
+
+async function refreshResumeHint() {
+  const saveDir = saveDirEl.value.trim();
+  const outName = outNameEl.value.trim() || "cloned-site";
+  if (!saveDir) {
+    resumeBtn.disabled = true;
+    resumeBtn.dataset.available = "0";
+    resumeHint.classList.add("hidden");
+    return;
+  }
+  try {
+    const info = await invoke("check_resume_job", { saveDir, outName });
+    resumeBtn.dataset.available = info.available ? "1" : "0";
+    resumeBtn.disabled = downloadBusy || !info.available;
+    if (info.available) {
+      resumeHint.textContent = info.message;
+      resumeHint.classList.remove("hidden");
+      if (info.startUrl && !urlEl.value.trim()) urlEl.value = info.startUrl;
+    } else {
+      resumeHint.classList.add("hidden");
+    }
+  } catch {
+    resumeBtn.disabled = true;
+    resumeBtn.dataset.available = "0";
+  }
+}
+
+function buildDownloadOptions(extra = {}) {
+  return {
+    url: normalizeUrlInput(urlEl.value) || "https://example.com",
+    saveDir: saveDirEl.value.trim(),
+    outName: outNameEl.value.trim() || "cloned-site",
+    maxPages: Number(maxPagesEl.value) || 40,
+    maxDepth: Number(maxDepthEl.value) || 3,
+    concurrency: Number(concurrencyEl.value) || 8,
+    includeExternalAssets: externalAssetsEl.checked,
+    followExternalPages: followExternalEl.checked,
+    zip: zipEl.checked,
+    blockTracking: blockTrackingEl.checked,
+    reportBrokenLinks: reportBrokenEl.checked,
+    plannedPages: null,
+    resume: false,
+    ...extra,
+  };
 }
 
 function updateServerControls() {
@@ -386,7 +470,6 @@ downloadBtn.addEventListener("click", async () => {
     appendLog(logEl, "لطفاً محل ذخیره‌سازی را انتخاب کنید.", "err");
     return;
   }
-  const outName = outNameEl.value.trim() || "cloned-site";
   urlEl.value = url;
   logEl.textContent = "";
   setDownloadBusy(true);
@@ -395,19 +478,7 @@ downloadBtn.addEventListener("click", async () => {
 
   try {
     const result = await invoke("download_site", {
-      options: {
-        url,
-        saveDir,
-        outName,
-        maxPages: Number(maxPagesEl.value) || 40,
-        maxDepth: Number(maxDepthEl.value) || 3,
-        concurrency: Number(concurrencyEl.value) || 8,
-        includeExternalAssets: externalAssetsEl.checked,
-        followExternalPages: followExternalEl.checked,
-        zip: zipEl.checked,
-        blockTracking: blockTrackingEl.checked,
-        reportBrokenLinks: reportBrokenEl.checked,
-      },
+      options: buildDownloadOptions({ url, saveDir, plannedPages: null, resume: false }),
     });
     lastOutDir = result.outDir;
     appendLog(logEl, result.message, result.cancelled ? "err" : "ok");
@@ -415,9 +486,137 @@ downloadBtn.addEventListener("click", async () => {
     desktopPkgBtn.disabled = false;
     settingsCache = await invoke("load_app_settings");
     renderRecent(settingsCache);
+    await refreshResumeHint();
     if (!result.cancelled) setProgress(100, "تمام");
   } catch (err) {
     appendLog(logEl, String(err), "err");
+    await refreshResumeHint();
+  } finally {
+    setDownloadBusy(false);
+  }
+});
+
+discoverBtn.addEventListener("click", async () => {
+  const url = normalizeUrlInput(urlEl.value);
+  if (!url) {
+    appendLog(logEl, "لطفاً آدرس سایت را وارد کنید.", "err");
+    return;
+  }
+  urlEl.value = url;
+  logEl.textContent = "";
+  setDownloadBusy(true);
+  setProgress(5, "کشف آدرس‌ها...");
+  appendLog(logEl, `در حال کشف همه صفحات از ${url} ...`);
+  try {
+    const result = await invoke("discover_site", {
+      options: {
+        url,
+        maxPagesCap: 2000,
+        maxDepth: Math.max(Number(maxDepthEl.value) || 3, 20),
+        followExternalPages: followExternalEl.checked,
+        blockTracking: blockTrackingEl.checked,
+      },
+    });
+    appendLog(logEl, result.message, "ok");
+    renderDiscoverList(result.pages || []);
+    setProgress(100, "کشف تمام شد");
+  } catch (err) {
+    appendLog(logEl, String(err), "err");
+  } finally {
+    setDownloadBusy(false);
+  }
+});
+
+selectAllUrlsBtn.addEventListener("click", () => {
+  discoverList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.checked = true;
+  });
+});
+
+clearUrlsBtn.addEventListener("click", () => {
+  discoverList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.checked = false;
+  });
+});
+
+confirmDiscoverBtn.addEventListener("click", async () => {
+  const urls = selectedDiscoverUrls();
+  if (!urls.length) {
+    appendLog(logEl, "حداقل یک آدرس را انتخاب کنید.", "err");
+    return;
+  }
+  if (!saveDirEl.value.trim()) await initSaveDir();
+  const saveDir = saveDirEl.value.trim();
+  if (!saveDir) {
+    appendLog(logEl, "لطفاً محل ذخیره‌سازی را انتخاب کنید.", "err");
+    return;
+  }
+  const url = normalizeUrlInput(urlEl.value) || urls[0];
+  urlEl.value = url;
+  logEl.textContent = "";
+  setDownloadBusy(true);
+  setProgress(2, "شروع دانلود تأییدشده...");
+  appendLog(logEl, `دانلود ${urls.length} آدرس تأییدشده...`);
+  try {
+    const result = await invoke("download_site", {
+      options: buildDownloadOptions({
+        url,
+        saveDir,
+        maxPages: urls.length,
+        plannedPages: urls,
+        resume: false,
+      }),
+    });
+    lastOutDir = result.outDir;
+    appendLog(logEl, result.message, result.cancelled ? "err" : "ok");
+    openBtn.disabled = false;
+    desktopPkgBtn.disabled = false;
+    settingsCache = await invoke("load_app_settings");
+    renderRecent(settingsCache);
+    await refreshResumeHint();
+    if (!result.cancelled) {
+      setProgress(100, "تمام");
+      discoverBox.classList.add("hidden");
+    }
+  } catch (err) {
+    appendLog(logEl, String(err), "err");
+    await refreshResumeHint();
+  } finally {
+    setDownloadBusy(false);
+  }
+});
+
+resumeBtn.addEventListener("click", async () => {
+  if (!saveDirEl.value.trim()) await initSaveDir();
+  const saveDir = saveDirEl.value.trim();
+  if (!saveDir) {
+    appendLog(logEl, "لطفاً محل ذخیره‌سازی را انتخاب کنید.", "err");
+    return;
+  }
+  logEl.textContent = "";
+  setDownloadBusy(true);
+  setProgress(5, "ادامه دانلود...");
+  appendLog(logEl, "ادامه از فایل وضعیت ذخیره‌شده...");
+  try {
+    const result = await invoke("download_site", {
+      options: buildDownloadOptions({
+        url: normalizeUrlInput(urlEl.value) || "https://example.com",
+        saveDir,
+        resume: true,
+        plannedPages: null,
+      }),
+    });
+    lastOutDir = result.outDir;
+    appendLog(logEl, result.message, result.cancelled ? "err" : "ok");
+    openBtn.disabled = false;
+    desktopPkgBtn.disabled = false;
+    settingsCache = await invoke("load_app_settings");
+    renderRecent(settingsCache);
+    await refreshResumeHint();
+    if (!result.cancelled) setProgress(100, "تمام");
+  } catch (err) {
+    appendLog(logEl, String(err), "err");
+    await refreshResumeHint();
   } finally {
     setDownloadBusy(false);
   }
@@ -426,7 +625,7 @@ downloadBtn.addEventListener("click", async () => {
 cancelDownloadBtn.addEventListener("click", async () => {
   try {
     await invoke("cancel_download");
-    appendLog(logEl, "درخواست توقف ارسال شد...", "err");
+    appendLog(logEl, "درخواست توقف ارسال شد — پیشرفت ذخیره می‌شود...", "err");
   } catch (err) {
     appendLog(logEl, String(err), "err");
   }
@@ -548,10 +747,12 @@ openProjectBtn.addEventListener("click", async () => {
   }
 });
 
-initSettings();
+initSettings().then(() => refreshResumeHint());
 refreshServerStatus();
 refreshRuntimeStatus();
 setInterval(refreshServerStatus, 4000);
+outNameEl.addEventListener("change", refreshResumeHint);
+saveDirEl.addEventListener("change", refreshResumeHint);
 
 listen("download-progress", (event) => {
   if (typeof event.payload === "string") appendLog(logEl, event.payload);

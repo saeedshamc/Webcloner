@@ -10,8 +10,9 @@ use std::sync::{
 use tauri::{Manager, WindowBuilder, WindowUrl};
 use url::Url;
 use webcloner::{
-    downloader, local_server::LocalServer, local_server::ProjectScan, local_server::RuntimeStatus,
-    local_server::ServerBackend, local_server::ServerStatus, net_util, zipper,
+    downloader, job_state::JobState, local_server::LocalServer, local_server::ProjectScan,
+    local_server::RuntimeStatus, local_server::ServerBackend, local_server::ServerStatus, net_util,
+    zipper,
 };
 
 struct AppState {
@@ -34,6 +35,32 @@ struct DownloadOptions {
     zip: bool,
     block_tracking: bool,
     report_broken_links: bool,
+    /// Confirmed page URLs from discovery (optional).
+    planned_pages: Option<Vec<String>>,
+    /// Resume interrupted job in output folder.
+    resume: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscoverOptionsIn {
+    url: String,
+    max_pages_cap: usize,
+    max_depth: usize,
+    follow_external_pages: bool,
+    block_tracking: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResumeInfo {
+    available: bool,
+    out_dir: Option<String>,
+    start_url: Option<String>,
+    planned_pages: usize,
+    done_pages: usize,
+    done_assets: usize,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -397,6 +424,89 @@ fn cancel_download(state: tauri::State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn discover_site(
+    options: DiscoverOptionsIn,
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+) -> Result<downloader::DiscoverResult, String> {
+    if state
+        .download_active
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("یک عملیات دانلود/کشف دیگر در حال اجراست.".into());
+    }
+    state.download_cancel.store(false, Ordering::SeqCst);
+
+    struct Reset {
+        active: Arc<AtomicBool>,
+        cancel: Arc<AtomicBool>,
+    }
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            self.active.store(false, Ordering::SeqCst);
+            self.cancel.store(false, Ordering::SeqCst);
+        }
+    }
+    let _reset = Reset {
+        active: state.download_active.clone(),
+        cancel: state.download_cancel.clone(),
+    };
+
+    let start_url = normalize_start_url(&options.url)?;
+    let window_for_progress = window.clone();
+    let progress = Arc::new(move |line: String| {
+        let _ = window_for_progress.emit("download-progress", line);
+    });
+
+    let discover_opts = downloader::DiscoverOptions {
+        start_url,
+        max_pages_cap: options.max_pages_cap.clamp(1, 5000),
+        max_depth: options.max_depth.min(100),
+        follow_external_pages: options.follow_external_pages,
+        block_tracking: options.block_tracking,
+        timeout_secs: 25,
+        user_agent: "webcloner-gui/1.0 (+offline mirror tool)".to_string(),
+        on_progress: Some(progress),
+        cancel_flag: Some(state.download_cancel.clone()),
+    };
+
+    downloader::discover_async(discover_opts)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn check_resume_job(save_dir: String, out_name: String) -> Result<ResumeInfo, String> {
+    let out_dir = resolve_output_dir(&save_dir, &out_name)?;
+    match JobState::load(&out_dir).map_err(|e| e.to_string())? {
+        Some(st) => Ok(ResumeInfo {
+            available: true,
+            out_dir: Some(out_dir.display().to_string()),
+            start_url: Some(st.start_url),
+            planned_pages: st.planned_pages.len(),
+            done_pages: st.done_pages.len(),
+            done_assets: st.done_assets.len(),
+            message: format!(
+                "دانلود ناتمام پیدا شد: {}/{} صفحه و {} فایل ذخیره‌شده.",
+                st.done_pages.len(),
+                st.planned_pages.len(),
+                st.done_assets.len()
+            ),
+        }),
+        None => Ok(ResumeInfo {
+            available: false,
+            out_dir: None,
+            start_url: None,
+            planned_pages: 0,
+            done_pages: 0,
+            done_assets: 0,
+            message: "وضعیت ادامه‌ای وجود ندارد.".into(),
+        }),
+    }
+}
+
+#[tauri::command]
 async fn download_site(
     options: DownloadOptions,
     window: tauri::Window,
@@ -451,6 +561,8 @@ async fn download_site(
         user_agent: "webcloner-gui/1.0 (+offline mirror tool)".to_string(),
         block_tracking: options.block_tracking,
         report_broken_links: options.report_broken_links,
+        planned_pages: options.planned_pages.clone(),
+        resume: options.resume,
         on_progress: Some(progress),
         on_progress_event: Some(progress_event),
         cancel_flag: Some(state.download_cancel.clone()),
@@ -631,6 +743,8 @@ fn main() {
             get_local_server_status,
             get_download_status,
             cancel_download,
+            discover_site,
+            check_resume_job,
             download_site,
             open_folder,
             open_url,

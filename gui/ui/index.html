@@ -42,7 +42,7 @@
         <label class="field">
           <span>آدرس سایت</span>
           <input id="url" type="text" placeholder="example.com یا https://example.com" spellcheck="false" autocomplete="off" />
-          <small class="hint">نیازی به https:// نیست — خودکار اضافه می‌شود.</small>
+          <small class="hint">یا «کشف همه آدرس‌ها» را بزنید تا لیست صفحات را ببینید و بعد از تأیید دانلود شود. اگر قطع شد «ادامه دانلود» را بزنید.</small>
         </label>
 
         <label class="field">
@@ -87,12 +87,28 @@
         </div>
 
         <div class="actions">
+          <button id="discoverBtn" class="secondary">کشف همه آدرس‌ها</button>
           <button id="downloadBtn" class="primary">شروع دانلود</button>
+          <button id="resumeBtn" class="secondary" disabled>ادامه دانلود</button>
           <button id="cancelDownloadBtn" class="danger" disabled>توقف دانلود</button>
           <button id="openBtn" class="secondary" disabled>باز کردن پوشه</button>
           <button id="useForServerBtn" class="secondary" disabled>سرو همین پوشه →</button>
           <button id="desktopPkgBtn" class="secondary" disabled>ساخت اپ دسکتاپ</button>
         </div>
+
+        <div id="discoverBox" class="discover-box hidden">
+          <div class="discover-head">
+            <span id="discoverSummary">آدرس‌های کشف‌شده</span>
+            <div class="discover-actions">
+              <button type="button" id="selectAllUrlsBtn" class="secondary">همه</button>
+              <button type="button" id="clearUrlsBtn" class="secondary">هیچ‌کدام</button>
+              <button type="button" id="confirmDiscoverBtn" class="primary">دانلود تأییدشده‌ها</button>
+            </div>
+          </div>
+          <div id="discoverList" class="discover-list"></div>
+        </div>
+
+        <p id="resumeHint" class="hint hidden"></p>
 
         <section class="log-panel">
           <div class="log-header">گزارش دانلود</div>

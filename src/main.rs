@@ -93,6 +93,8 @@ fn main() -> anyhow::Result<()> {
                 user_agent,
                 block_tracking,
                 report_broken_links,
+                planned_pages: None,
+                resume: false,
                 on_progress: None,
                 on_progress_event: None,
                 cancel_flag: None,
