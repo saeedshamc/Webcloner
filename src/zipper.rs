@@ -20,7 +20,10 @@ pub fn zip_dir(src_dir: &Path, zip_path: &Path) -> Result<()> {
     let mut buffer = Vec::new();
     for entry in WalkDir::new(src_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
-        let rel = path.strip_prefix(src_dir).unwrap();
+        let rel = match path.strip_prefix(src_dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
         if rel.as_os_str().is_empty() {
             continue;
         }

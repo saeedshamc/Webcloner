@@ -374,17 +374,32 @@ async fn start_static_server(dir: PathBuf, port: u16) -> Result<RunningServer> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
+    // Bind first so a busy port returns a clean error instead of panicking.
+    let listener = std::net::TcpListener::bind(addr).with_context(|| {
+        format!("پورت {port} اشغال است یا در دسترس نیست. پورت دیگری انتخاب کنید.")
+    })?;
+    listener.set_nonblocking(true)?;
+
     let handle = tokio::spawn(async move {
         let serve_dir = ServeDir::new(&dir).append_index_html_on_directories(true);
         let app = axum::Router::new().nest_service("/", serve_dir);
-        let server = axum::Server::bind(&addr).serve(app.into_make_service());
-        let graceful = server.with_graceful_shutdown(async {
-            let _ = shutdown_rx.await;
-        });
-        let _ = graceful.await;
+        match axum::Server::from_tcp(listener) {
+            Ok(server) => {
+                let graceful = server
+                    .serve(app.into_make_service())
+                    .with_graceful_shutdown(async {
+                        let _ = shutdown_rx.await;
+                    });
+                let _ = graceful.await;
+            }
+            Err(_) => {}
+        }
     });
 
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    if handle.is_finished() {
+        bail!("سرور استاتیک روی پورت {port} بالا نیامد.");
+    }
 
     Ok(RunningServer::Static {
         shutdown_tx,
